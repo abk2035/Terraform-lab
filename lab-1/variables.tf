@@ -1,6 +1,7 @@
 variable my_vpc_cidr_block {}
 variable my_subnet_cidr_block {}
 variable avail_zone {}
+variable region {}
 variable env_prefix {}
 variable my_ip {}
 variable instance_type {}

@@ -106,7 +106,7 @@ Après le déploiement, vous pouvez récupérer l’IP publique de l’instance 
 ### Connexion SSH
 
 ```bash
-ssh -i /chemin/vers/votre/clef_privée ec2-user@<ip-publique>
+ssh -i /chemin/vers/votre/clef_privée ubuntu@<ip-publique>
 ```
 
 ### Accès à l’application

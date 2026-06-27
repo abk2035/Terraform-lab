@@ -68,7 +68,7 @@ data "aws_ami" "latest-amazon-linux-image" {
 resource "aws_key_pair" "ssh-key" {
 
     # Nom de la clé visible dans AWS
-    key_name = "server-key"
+    key_name = "aws-server-key"
 
     # Lecture de la clé publique depuis le poste local
     public_key = file(var.public_key_location)
@@ -85,7 +85,9 @@ resource "aws_instance" "my_app-server" {
     associate_public_ip_address = true
     key_name = aws_key_pair.ssh-key.key_name
 
-    # user_data = file("entry-script.sh")
+    user_data = file("entry-script.sh")
+
+    user_data_replace_on_change = true
 
     tags = {
         Name = "${var.env_prefix}-server"
