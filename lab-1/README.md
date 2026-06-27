@@ -17,9 +17,8 @@ Cette infrastructure sert de base pour héberger une application web ou un servi
 
 ## 2. Architecture déployée
 
-![Architecture de l'infrastructure](images/architecture.svg)
+![Architecture de l'infrastructure](images/architecture.png)
 
-> Ajoutez ici votre schéma d’architecture final si vous souhaitez le remplacer par une image plus détaillée.
 
 ### Composants principaux
 
@@ -124,7 +123,7 @@ Le déploiement crée les ressources suivantes :
 
 1. VPC
 2. Sous-réseau public
-3. Passerelle Internet
+3. Passerelle Internet (gateway)
 4. Table de routage par défaut mise à jour
 5. Groupe de sécurité
 6. Paire de clés SSH
