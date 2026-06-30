@@ -1,0 +1,160 @@
+# Architecture Haute Disponibilité : Déploiement de WordPress sur AWS
+
+Ce dépôt contient le code et la configuration nécessaires pour déployer un site WordPress hautement disponible, sécurisé et scalable sur AWS, conformément aux standards de production.
+
+## 1. Objectifs & Fonctionnalités du Projet
+
+* **Réseau Isolé (VPC) :** Configuration Multi-AZ avec sous-réseaux publics (pour le routage externe) et privés (pour l'application et la base de données) afin de masquer le front-end du grand public.
+* **Haute Disponibilité & Scalabilité :** Répartition de la charge via un Application Load Balancer (ALB) et mise à l'échelle automatique grâce à un Auto Scaling Group (ASG).
+* **Données Persistantes & Cache :** Base de données managée multi-AZ (Amazon RDS MySQL) associée à une couche de cache en mémoire (Amazon ElastiCache Redis) pour optimiser les performances.
+* **Sécurité Renforcée :** Protection applicative par AWS WAF, chiffrement des connexions via AWS Certificate Manager (ACM), et distribution sécurisée globale par Amazon CloudFront.
+
+---
+
+## 2. Technologies Utilisées
+
+| Composant | Service AWS / Outil | Rôle / Justification |
+| --- | --- | --- |
+| **Réseau (VPC)** | AWS VPC, Internet Gateway, NAT Gateway | Isolation et routage sécurisé des flux |
+| **Hébergement** | Amazon EC2 | Exécution des conteneurs/serveurs WordPress |
+| **Auto-scaling** | Auto Scaling Group (ASG) | Adaptation de la capacité des nœuds selon la charge |
+| **Répartition de charge** | Elastic Load Balancer (ALB) | Distribution du trafic vers les instances saines |
+| **Base de données** | Amazon RDS (MySQL) | Persistance des données WordPress en mode managé |
+| **Mise en cache** | Amazon ElastiCache (Redis) | Optimisation des requêtes et réduction de la charge DB |
+| **Sécurité Edge** | AWS WAF | Protection contre les failles Web (OWASP Top 10) |
+| **Réseau de diffusion** | Amazon CloudFront | CDN pour la mise en cache globale du contenu statique |
+| **Certificats SSL** | AWS Certificate Manager (ACM) | Gestion et renouvellement automatique des certificats HTTPS |
+
+---
+
+## 3. Feuille de Route de Déploiement (Étapes)
+
+### Phase 1 : Conception & Fondations Réseau (VPC)
+
+1. **Création du VPC :** Configurer un bloc CIDR dédié (ex: `10.0.0.0/16`).
+2. **Définition des Sous-réseaux (Multi-AZ) :**
+* 2 sous-réseaux publics (Zone A et B) pour l'ALB et la NAT Gateway.
+* 2 sous-réseaux privés Applicatifs (Zone A et B) pour les instances EC2 WordPress.
+* 2 sous-réseaux privés Data (Zone A et B) pour RDS et ElastiCache.
+
+
+3. **Passerelles & Routage :** Déployer une *Internet Gateway* pour les flux entrants de l'ALB, et une *NAT Gateway* dans un sous-réseau public pour permettre aux instances privées de télécharger les mises à jour en toute sécurité.
+
+### Phase 2 : Couche de Données & Stockage (RDS & ElastiCache)
+
+1. **Déploiement de RDS :** Initialiser une instance MySQL en mode Multi-AZ dans le sous-réseau Data. Configurer un groupe de sécurité (Security Group) n'acceptant que le trafic provenant du futur Security Group des instances EC2 applicatives.
+2. **Configuration d'ElastiCache :** Déployer un cluster Redis dans le sous-réseau Data pour le cache de sessions et d'objets WordPress.
+3. **Stockage Partagé (Optionnel mais recommandé) :** Configurer un système de fichiers Amazon EFS pour centraliser le répertoire `wp-content` entre toutes les instances EC2 de l'ASG.
+
+### Phase 3 : Compute & Haute Disponibilité (ALB & ASG)
+
+1. **Préparation de la Launch Template :** Configurer un script utilisateur (*User Data*) pour installer Docker/Apache, PHP, télécharger WordPress et monter automatiquement le volume EFS ou configurer la connexion vers la base de données RDS.
+2. **Configuration de l'ALB :** Placer le Load Balancer dans les sous-réseaux publics. Configurer le *Target Group* ciblant le port HTTP/HTTPS.
+3. **Mise en place de l'ASG :** Lier l'ASG au Target Group de l'ALB. Définir des politiques de scaling (ex: déclencher une nouvelle instance si la consommation CPU moyenne dépasse 70%). **Placer impérativement les instances dans les sous-réseaux privés.**
+
+### Phase 4 : Sécurisation & Front-End (ACM, CloudFront & WAF)
+
+1. **Génération du Certificat :** Demander un certificat SSL public via ACM pour votre nom de domaine.
+2. **Création de la Distribution CloudFront :** Pointer l'origine de CloudFront vers l'ALB. Configurer la redirection systématique du HTTP vers le HTTPS en y associant le certificat ACM.
+3. **Activation d'AWS WAF :** Associer des règles de pare-feu managées (AWS Managed Rules) à CloudFront ou à l'ALB pour bloquer les injections SQL et les attaques par force brute courantes sur WordPress.
+
+---
+
+## 4. Comment Tester le Projet ?
+
+1. Récupérez l'URL fournie par votre distribution CloudFront ou votre ALB.
+2. Accédez à l'interface d'installation de WordPress via votre navigateur.
+3. Simulez une panne (en coupant manuellement une instance EC2 depuis la console AWS) et observez comment l'Auto Scaling Group recrée automatiquement une nouvelle instance saine sans interruption de service.
+4. Vérifiez dans la configuration réseau que vos instances EC2 n'ont pas d'adresse IP publique et restent totalement invisibles depuis l'Internet direct.
+
+
+
+
+
+
+
+
+## 5. Feuille de Route de Déploiement & Architecture Terraform
+
+on découpe le projet en modules Terraform réutilisables pour éviter le code monolithique.
+
+### Étape 1 : Initialisation du Backend & Structure IaC
+
+* Créer un bucket S3 et une table DynamoDB pour gérer le *Remote State* de Terraform et le *State Locking* (évite les conflits si plusieurs personnes appliquent le code).
+* Structurer le projet en modules : `vpc`, `security_groups`, `rds`, `elasticache`, `compute`, `cdn_security`.
+
+### Étape 2 : Le Module Réseau (`modules/vpc`)
+
+* Écrire le code Terraform pour créer le VPC (ex: `10.0.0.0/16`).
+
+
+* Définir les sous-réseaux (2 publics pour l'ALB/NAT, 2 privés pour les EC2, 2 privés pour la data) répartis sur deux Zones de Disponibilité (AZ) distinctes.
+
+
+* Déployer l'Internet Gateway et la NAT Gateway (via Terraform) pour permettre aux instances privées de faire leurs backups ou mises à jour vers l'extérieur.
+
+
+
+### Étape 3 : Sécurité & Données (`modules/rds` & `modules/elasticache`)
+
+* **Security Groups :** Définir les règles strictes en code (la base de données RDS n'accepte le trafic sur le port 3306 *que* s'il provient du Security Group des instances EC2).
+* 
+**RDS Multi-AZ :** Provisionner l'instance RDS MySQL managée via Terraform dans le sous-réseau privé data.
+
+
+* 
+**ElastiCache Redis :** Déployer le cluster de cache en mémoire pour WordPress.
+
+
+
+### Étape 4 : Serveurs & Haute Disponibilité (`modules/compute`)
+
+* Créer une *Launch Template* EC2. Inclure dans l'argument `user_data` de Terraform un script Bash qui installe automatiquement Docker, lance le conteneur WordPress et injecte les variables d'environnement de la base de données (récupérées dynamiquement depuis le module RDS).
+* Déployer l'Application Load Balancer (ALB) dans les sous-réseaux publics.
+
+
+* Configurer l'Auto Scaling Group (ASG) dans les sous-réseaux privés, lié au Target Group de l'ALB, avec une politique de scaling basée sur la charge CPU.
+
+
+
+### Étape 5 : Sécurité Edge & CDN (`modules/cdn_security`)
+
+* Générer le certificat SSL via la ressource `aws_acm_certificate`.
+
+
+* Créer la distribution Amazon CloudFront qui prend l'ALB comme origine.
+
+
+* Associer une Web ACL d'AWS WAF (Web Application Firewall) à la distribution pour bloquer les attaques courantes.
+
+
+---
+
+
+### Commandes pour déployer
+
+```bash
+# 1. Initialiser Terraform (téléchargement des providers et des modules)
+terraform init
+
+# 2. Valider le code et voir le plan d'exécution de l'infrastructure
+terraform plan
+
+# 3. Déployer l'intégralité de l'architecture sur AWS
+terraform apply -auto-approve
+
+```
+
+## 6. Validation Avec Terraform
+
+1. **Réseau Privé :** Tente de te connecter en SSH directement à une instance WordPress. Cela doit échouer, prouvant que le front-end n'est pas exposé directement à l'extérieur.
+
+
+2. **Haute Disponibilité :** Termine manuellement une instance EC2 depuis la console AWS. Observe Terraform et l'ASG travailler ensemble : l'ASG va recréer une instance saine en tâche de fond sans coupure pour l'utilisateur final.
+
+
+3. **Nettoyage :** Une fois la démonstration terminée, détruis tout en une seule commande pour éviter les coûts inutiles :
+```bash
+terraform destroy -auto-approve
+
+```
