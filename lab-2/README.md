@@ -47,6 +47,10 @@ Avant de lancer le déploiement, assurez-vous d'avoir :
 - `kubectl` installé
 - accès à un compte AWS avec les droits nécessaires pour créer des ressources EKS et VPC
 
+## Architechture deployee
+
+![Architecture de l'infrastructure](images/architecture.png)
+
 ## Variables importantes
 
 Le projet attend les variables suivantes :

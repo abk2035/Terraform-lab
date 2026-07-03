@@ -40,6 +40,157 @@ Ce dépôt contient le code et la configuration nécessaires pour déployer un s
 
 3. **Passerelles & Routage :** Déployer une *Internet Gateway* pour les flux entrants de l'ALB, et une *NAT Gateway* dans un sous-réseau public pour permettre aux instances privées de télécharger les mises à jour en toute sécurité.
 
+
+---
+
+### Detail Phase 1 : Conception & Fondations Réseau (VPC)
+
+Le VPC (Virtual Private Cloud) agit comme ton datacenter virtuel isolé au sein d'AWS. Pour ce projet, l'infrastructure est déployée dans la région **N. Virginia (`us-east-1`)**, en exploitant les zones de disponibilité `us-east-1a` (Zone A) et `us-east-1b` (Zone B).
+
+#### Création du VPC
+
+* Connecte-toi à la console AWS et ouvre le service **VPC**.
+* Dans le menu de gauche, clique sur **Your VPCs**, puis sur le bouton orange **Create VPC**.
+* Configure les options suivantes :
+* **Resources to create :** Sélectionne **VPC only** afin de tout configurer manuellement et maîtriser chaque brique.
+* **Name tag :** `wordpress-vpc`
+* **IPv4 CIDR block :** Sélectionne *IPv4 CIDR manual input*.
+* **IPv4 CIDR :** Saisis `10.0.0.0/16` (ce qui génère un pool de 65 536 adresses IP privées).
+* **Tenancy :** `Default`
+
+
+* Clique sur **Create VPC**.
+* *(Recommandé)* Une fois le VPC créé, sélectionne-le, clique sur **Actions** (en haut à droite) > **Edit VPC settings**. Coche les cases **Enable DNS hostnames** et **Enable DNS support**, puis sauvegarde. Cela permet à tes ressources de s'identifier via des noms de domaine AWS plutôt que par de simples adresses IP.
+
+#### Définition des Sous-réseaux (Multi-AZ)
+
+Pour garantir la haute disponibilité, les sous-réseaux sont répartis sur deux zones de disponibilité distinctes et la plage globale `10.0.0.0/16` est découpée en blocs plus restreints (`/24`, soit 256 adresses IP par sous-réseau).
+
+* Dans le menu de gauche, clique sur **Subnets**, puis sur **Create subnet**.
+* Sélectionne ton VPC : `wordpress-vpc`.
+* Ajoute et configure les sous-réseaux suivants en cliquant sur **Add new subnet** pour exécuter la création en une seule fois :
+
+##### Zone de Disponibilité A (`us-east-1a`)
+
+* **Subnet : Public-App-AZ-A**
+* *Availability Zone :* `us-east-1a`
+* *IPv4 CIDR block :* `10.0.1.0/24`
+
+
+* **Subnet : Private-Web-AZ-A** (Dédié à l'hébergement EC2 WordPress)
+* *Availability Zone :* `us-east-1a`
+* *IPv4 CIDR block :* `10.0.2.0/24`
+
+
+* **Subnet : Private-Data-AZ-A** (Dédié à RDS et ElastiCache)
+* *Availability Zone :* `us-east-1a`
+* *IPv4 CIDR block :* `10.0.3.0/24`
+
+
+
+##### Zone de Disponibilité B (`us-east-1b`)
+
+* **Subnet : Public-App-AZ-B**
+* *Availability Zone :* `us-east-1b`
+* *IPv4 CIDR block :* `10.0.11.0/24`
+
+
+* **Subnet : Private-Web-AZ-B** (Dédié à l'hébergement EC2 WordPress)
+* *Availability Zone :* `us-east-1b`
+* *IPv4 CIDR block :* `10.0.12.0/24`
+
+
+* **Subnet : Private-Data-AZ-B** (Dédié à RDS et ElastiCache)
+* *Availability Zone :* `us-east-1b`
+* *IPv4 CIDR block :* `10.0.13.0/24`
+
+
+* Clique sur **Create subnet**.
+* **Activation de l'IP publique automatique :** Sélectionne le sous-réseau `Public-App-AZ-A`, clique sur **Actions** > **Edit subnet settings**, coche la case **Enable auto-assign public IPv4 address** et sauvegarde. Répète la même opération pour le sous-réseau `Public-App-AZ-B`.
+
+#### Déploiement des Passerelles (Internet & NAT)
+
+##### Internet Gateway (IGW) - Pour le réseau public
+
+L'IGW assure la liaison et la communication bidirectionnelle entre les ressources publiques du VPC et l'Internet extérieur.
+
+* Dans le menu de gauche du service VPC, clique sur **Internet gateways**, puis sur **Create internet gateway**.
+* Nomme-la : `wordpress-igw` et clique sur **Create**.
+* Une fois la passerelle générée, clique sur **Actions** > **Attach to VPC**, sélectionne `wordpress-vpc` et valide l'association.
+
+##### NAT Gateway - Pour le réseau privé
+
+La NAT Gateway permet aux instances situées en zone privée d'initier des flux sortants (téléchargement de dépendances, paquets de sécurité ou plugins) tout en interdisant toute tentative de connexion entrante non sollicitée depuis l'extérieur.
+
+* Dans le menu de gauche, clique sur **NAT gateways**, puis sur **Create NAT gateway**.
+* Configure la ressource avec les paramètres suivants :
+* **Name :** `wordpress-nat-gw`
+* **Subnet :** Sélectionne votre VPC
+* **Connectivity type :** `Public`
+* **Elastic IP :** Clique sur le bouton **Allocate Elastic IP** pour réserver et lui lier une adresse IP publique fixe et immuable.
+
+
+* Clique sur **Create NAT gateway** *(l'initialisation complète par AWS requiert généralement 2 à 3 minutes)*.
+
+#### Configuration des Tables de Routage (Routing)
+
+L'aiguillage des flux au sein des tables de routage détermine l'étanchéité et la nature (publique ou privée) des sous-réseaux. La table par défaut est volontairement isolée par sécurité, et des tables dédiées sont assignées aux différents tiers de l'application.
+
+##### Sécurisation de la Main Route Table (Table par défaut)
+
+* Dans le menu de gauche, clique sur **Route tables**.
+* Identifie la table de routage liée à ton VPC affichant la valeur `Yes` dans la colonne **Main**.
+* Sélectionne cette table, ouvre l'onglet **Routes** en bas et valide qu'elle contient uniquement la règle locale : `10.0.0.0/16 -> local`. N'y ajoute aucun chemin vers une passerelle externe. Tout sous-réseau créé ultérieurement sans association explicite y sera rattaché par défaut et restera ainsi hermétique à Internet.
+* Renomme cette table : `main-route-table-secured-private`.
+
+##### Configuration de la Table de Routage Publique
+
+* Clique sur **Create route table**.
+* **Name :** `public-route-table`
+* **VPC :** `wordpress-vpc`
+
+
+* Clique sur **Create**.
+* Sélectionne la table ainsi créée, puis ouvre l'onglet **Routes** > **Edit routes**.
+* Clique sur **Add route** pour définir la sortie :
+* *Destination :* `0.0.0.0/0` (Tout le trafic à destination d'Internet)
+* *Target :* Choisis **Internet Gateway**, puis sélectionne `wordpress-igw`.
+
+
+* Clique sur **Save changes**.
+* Bascule sur l'onglet **Subnet associations** > **Edit subnet associations**.
+* Coche exclusivement les sous-réseaux publics `Public-App-AZ-A` et `Public-App-AZ-B`, puis valide. Ils disposent désormais d'un accès public direct.
+
+##### Configuration de la Table de Routage Privée
+
+* Clique à nouveau sur **Create route table**.
+* **Name :** `private-route-table`
+* **VPC :** `wordpress-vpc`
+
+
+* Clique sur **Create**.
+* Sélectionne cette table, puis accède à l'onglet **Routes** > **Edit routes**.
+* Clique sur **Add route** pour rediriger les flux sortants :
+* *Destination :* `0.0.0.0/0`
+* *Target :* Choisis **NAT Gateway**, puis sélectionne `wordpress-nat-gw`.
+
+
+* Clique sur **Save changes**.
+* Accède à l'onglet **Subnet associations** > **Edit subnet associations**.
+* Coche l'ensemble des 4 sous-réseaux privés restants (les tiers applicatifs et data des deux zones de disponibilité) :
+* `Private-Web-AZ-A`
+* `Private-Web-AZ-B`
+* `Private-Data-AZ-A`
+* `Private-Data-AZ-B`
+
+
+* Valide l'association.
+
+Les fondations réseau sont désormais finalisées et sécurisées, prêtes à accueillir les couches de calcul et de données.
+
+---
+
+
 ### Phase 2 : Couche de Données & Stockage (RDS & ElastiCache)
 
 1. **Déploiement de RDS :** Initialiser une instance MySQL en mode Multi-AZ dans le sous-réseau Data. Configurer un groupe de sécurité (Security Group) n'acceptant que le trafic provenant du futur Security Group des instances EC2 applicatives.
