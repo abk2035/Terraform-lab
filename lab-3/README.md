@@ -191,7 +191,7 @@ Les fondations réseau sont désormais finalisées et sécurisées, prêtes à a
 ---
 
 
-### Phase 2 : Couche de Données & Stockage (RDS & ElastiCache)
+### Phase 2 : Couche de Données & Stockage (RDS & ElastiCache (Valkey & EFS))
 
 1. **Déploiement de RDS :** Initialiser une instance MySQL en mode Multi-AZ dans le sous-réseau Data. Configurer un groupe de sécurité (Security Group) n'acceptant que le trafic provenant du futur Security Group des instances EC2 applicatives.
 2. **Configuration d'ElastiCache :** Déployer un cluster Redis dans le sous-réseau Data pour le cache de sessions et d'objets WordPress.
@@ -200,8 +200,6 @@ Les fondations réseau sont désormais finalisées et sécurisées, prêtes à a
 Voici la version finale, corrigée et mise à jour de la **Phase 2 : Couche de Données & Stockage** pour ton README, en intégrant parfaitement toutes nos récentes discussions sur l'optimisation des coûts (Free Tier), l'utilisation de Valkey dans sa nouvelle interface, et la sécurisation des accès.
 
 ---
-
-### Phase 2 : Couche de Données & Stockage (RDS, Valkey & EFS)
 
 Cette phase consiste à déployer les briques étanches de persistance et de performance au sein de tes sous-réseaux privés Data. L'accès à ces ressources est strictement limité à l'aide de groupes de sécurité imbriqués.
 
@@ -368,11 +366,6 @@ Le dossier `/wp-content` (contenant les images importées, les plugins et les th
 3. **Mise en place de l'ASG :** Lier l'ASG au Target Group de l'ALB. Définir des politiques de scaling (ex: déclencher une nouvelle instance si la consommation CPU moyenne dépasse 70%). **Placer impérativement les instances dans les sous-réseaux privés.**
 
 ---
-Voici le guide ultra-détaillé de la **Phase 3 : Serveurs & Haute Disponibilité (ALB & ASG)** pour ton README, nettoyé de ses numérotations, mis à jour pour la console AWS actuelle et la région **N. Virginia (`us-east-1`)**.
-
----
-
-### Phase 3 : Compute & Haute Disponibilité (ALB & ASG)
 
 Cette phase orchestre le déploiement de la puissance de calcul. Les instances hébergeant WordPress sont isolées au sein des sous-réseaux privés, tandis qu'un Application Load Balancer (ALB) public distribue le trafic entrant et assure la tolérance aux pannes.
 
