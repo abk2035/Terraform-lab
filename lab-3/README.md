@@ -197,11 +197,331 @@ Les fondations réseau sont désormais finalisées et sécurisées, prêtes à a
 2. **Configuration d'ElastiCache :** Déployer un cluster Redis dans le sous-réseau Data pour le cache de sessions et d'objets WordPress.
 3. **Stockage Partagé (Optionnel mais recommandé) :** Configurer un système de fichiers Amazon EFS pour centraliser le répertoire `wp-content` entre toutes les instances EC2 de l'ASG.
 
+Voici la version finale, corrigée et mise à jour de la **Phase 2 : Couche de Données & Stockage** pour ton README, en intégrant parfaitement toutes nos récentes discussions sur l'optimisation des coûts (Free Tier), l'utilisation de Valkey dans sa nouvelle interface, et la sécurisation des accès.
+
+---
+
+### Phase 2 : Couche de Données & Stockage (RDS, Valkey & EFS)
+
+Cette phase consiste à déployer les briques étanches de persistance et de performance au sein de tes sous-réseaux privés Data. L'accès à ces ressources est strictement limité à l'aide de groupes de sécurité imbriqués.
+
+> 💡 **Note sur l'optimisation des coûts (Laboratoire FinOps) :**
+> Afin de maintenir ce déploiement dans le cadre du **Free Tier AWS** ou de minimiser la facturation, la base de données est configurée en mode Single-AZ (Instance unique). Pour le cache, ce projet utilise **Valkey** (le successeur open-source officiel d'ElastiCache) configuré sans réplica, ce qui permet de réduire les coûts d'environ 33 % par rapport à Redis.
+> 
+> 
+
+#### Création préalable des Groupes de Sécurité (Security Groups)
+
+Avant de lancer les bases de données ou le stockage, il est impératif de définir les barrières de sécurité réseau au sein du service **VPC** > **Security Groups**.
+
+##### Groupe de Sécurité pour les instances WordPress (SG-App)
+
+Ce groupe servira de badge d'accès pour les futures instances EC2 WordPress.
+
+* Clique sur **Create security group**.
+* **Security group name :** `wordpress-app-sg`
+* **VPC :** `wordpress-vpc`
+* **Inbound rules :** Laisse vide pour l'instant (l'Application Load Balancer y sera connecté plus tard).
+
+
+* Sauvegarde le groupe de sécurité.
+
+##### Groupe de Sécurité pour la Base de Données (SG-DB)
+
+* Clique sur **Create security group**.
+* **Security group name :** `wordpress-db-sg`
+* **VPC :** `wordpress-vpc`
+* **Inbound rules :** Ajoute une règle :
+* *Type :* `MySQL/Aurora (3306)`
+* *Source :* Sélectionne le groupe de sécurité `wordpress-app-sg` (en saisissant son identifiant `sg-xxxxxx`).
+
+
+
+
+* Sauvegarde. Seules les machines portant le badge `wordpress-app-sg` pourront interroger la base de données.
+
+
+
+##### Groupe de Sécurité pour le Cache Valkey (SG-Cache)
+
+* Clique sur **Create security group**.
+* **Security group name :** `wordpress-cache-sg`
+* **VPC :** `wordpress-vpc`
+* **Inbound rules :** Ajoute une règle :
+* *Type :* `Custom TCP`
+* *Port range :* `6379` (Port par défaut de Valkey / Redis).
+
+
+* *Source :* Sélectionne le groupe de sécurité `wordpress-app-sg`.
+
+
+* Sauvegarde.
+
+##### Groupe de Sécurité pour le Stockage Partagé (SG-EFS)
+
+* Clique sur **Create security group**.
+* **Security group name :** `wordpress-efs-sg`
+* **VPC :** `wordpress-vpc`
+* **Inbound rules :** Ajoute une règle :
+* *Type :* `NFS (2049)`
+* *Source :* Sélectionne le groupe de sécurité `wordpress-app-sg`.
+
+
+* Sauvegarde.
+
+#### Déploiement de la Base de Données Amazon RDS (MySQL)
+
+##### Configuration du Groupe de Sous-réseaux (Subnet Group)
+
+RDS a besoin de connaître les sous-réseaux privés où il a le droit de s'exécuter.
+
+* Va dans le service **RDS** > **Subnet groups**.
+* Clique sur **Create DB subnet group**.
+* **Name :** `wordpress-db-subnet-group`
+* **VPC :** `wordpress-vpc`
+* **Availability Zones :** Sélectionne `us-east-1a` et `us-east-1b`.
+* **Subnets :** Coche les deux plages correspondant à tes sous-réseaux Data (`10.0.3.0/24` et `10.0.13.0/24`).
+* Clique sur **Create**.
+
+##### Création de l'Instance MySQL (Mode Free Tier)
+
+* Va dans **Databases** > **Create database**.
+* **Choose a database creation method :** `Standard create`
+* **Engine options :** `MySQL`
+
+* **Templates :** Choisis explicitement **`Free Tier`**.
+* **Availability and durability :** L'option bascule automatiquement sur *Single DB instance* pour respecter la gratuité.
+* **Settings :**
+* *DB instance identifier :* `wordpress-rds`
+* *Master username :* `admin`
+* *Master password :* Définis un mot de passe robuste.
+
+
+* **Connectivity :**
+* *VPC :* `wordpress-vpc`
+* *DB subnet group :* Sélectionne `wordpress-db-subnet-group`.
+* *Public access :* Choisis impérativement **No**.
+
+
+* *Existing VPC security groups :* Retire le groupe `default` et sélectionne uniquement `wordpress-db-sg`.
+
+
+
+
+* Clique sur **Create database**. Note l'**Endpoint** (l'adresse de connexion DNS) une fois le statut *Available* atteint.
+
+#### Configuration d'Amazon ElastiCache (Valkey)
+
+##### Configuration du Groupe de Sous-réseaux ElastiCache
+
+* Va dans le service **ElastiCache** > **Subnet groups**.
+* Clique sur **Create subnet group**.
+* **Name :** `wordpress-cache-subnet-group`
+* **VPC :** `wordpress-vpc`
+* **Subnets :** Sélectionne tes sous-réseaux Data (`10.0.3.0/24` et `10.0.13.0/24`).
+* Clique sur **Create**.
+
+##### Création du Cluster Valkey (Nouvelle Interface AWS)
+
+* Dans le menu ElastiCache, va dans **Valkey clusters** > **Create Valkey cluster**.
+* **Deployment option :** Bascule impérativement sur **Self-designed** (pour désactiver le mode Serverless par défaut et pouvoir utiliser tes propres configurations réseau et de sécurité).
+* **Cluster settings :**
+* *Name :* `wordpress-valkey-cache`
+* *Node type :* Sélectionne **`cache.t4g.micro`** (l'instance Graviton la plus économique).
+* *Number of replicas :* Règle à `0` (Pas de Multi-AZ payant pour ce laboratoire).
+
+
+* **Connectivity :**
+* *Network type :* `IPv4`
+* *VPC :* Sélectionne `wordpress-vpc` (Étape indispensable pour débloquer les menus suivants).
+* *Subnet group selection :* Choisis *Choose an existing subnet group* et sélectionne `wordpress-cache-subnet-group`.
+
+
+* Clique sur **Next** en bas de la page.
+* **Advanced settings (Security) :** Dans la section *Network and security*, désélectionne le groupe `default` et associe uniquement ton groupe de sécurité personnalisé **`wordpress-cache-sg`**.
+* Clique sur **Create**.
+* **Récupération de l'Endpoint :** Une fois le statut *Available* obtenu, clique sur le nom du cluster. Dans l'onglet *Description*, repère et copie la ligne **Configuration endpoint** (elle ressemble à `clustercfg.wordpress-valkey-cache.xxxxxx.use1.cache.amazonaws.com:6379`). C'est cette adresse (sans le port `:6379`) qu'il faudra injecter dans ton plugin WordPress.
+
+#### Configuration du Stockage Partagé Amazon EFS
+
+Le dossier `/wp-content` (contenant les images importées, les plugins et les thèmes) doit être identique sur toutes tes futures instances EC2. Amazon EFS permet de partager ce dossier en réseau.
+
+* Va dans le service **EFS** > **File systems**.
+* Clique sur **Create file system** puis sélectionne **Customize** pour un contrôle total.
+* **General settings :** Nomme-le `wordpress-efs-share`.
+* **Network access :**
+* *VPC :* Sélectionne `wordpress-vpc`.
+* *Mount targets (Points de montage) :*
+* Pour la ligne `us-east-1a` : Sélectionne le sous-réseau applicatif privé `Private-Web-AZ-A` et remplace le Security Group par `wordpress-efs-sg`.
+* Pour la ligne `us-east-1b` : Sélectionne le sous-réseau applicatif privé `Private-Web-AZ-B` et remplace le Security Group par `wordpress-efs-sg`.
+
+
+
+
+* Clique sur **Next** puis sur **Create**. Note l'identifiant du système de fichiers (ex: `fs-0123456789abcdef0`).
+---
+
 ### Phase 3 : Compute & Haute Disponibilité (ALB & ASG)
 
 1. **Préparation de la Launch Template :** Configurer un script utilisateur (*User Data*) pour installer Docker/Apache, PHP, télécharger WordPress et monter automatiquement le volume EFS ou configurer la connexion vers la base de données RDS.
 2. **Configuration de l'ALB :** Placer le Load Balancer dans les sous-réseaux publics. Configurer le *Target Group* ciblant le port HTTP/HTTPS.
 3. **Mise en place de l'ASG :** Lier l'ASG au Target Group de l'ALB. Définir des politiques de scaling (ex: déclencher une nouvelle instance si la consommation CPU moyenne dépasse 70%). **Placer impérativement les instances dans les sous-réseaux privés.**
+
+---
+Voici le guide ultra-détaillé de la **Phase 3 : Serveurs & Haute Disponibilité (ALB & ASG)** pour ton README, nettoyé de ses numérotations, mis à jour pour la console AWS actuelle et la région **N. Virginia (`us-east-1`)**.
+
+---
+
+### Phase 3 : Compute & Haute Disponibilité (ALB & ASG)
+
+Cette phase orchestre le déploiement de la puissance de calcul. Les instances hébergeant WordPress sont isolées au sein des sous-réseaux privés, tandis qu'un Application Load Balancer (ALB) public distribue le trafic entrant et assure la tolérance aux pannes.
+
+#### Création préalable du Groupe de Sécurité pour le Load Balancer (SG-ALB)
+
+L'ALB étant la seule porte d'entrée publique du site, il doit disposer de son propre pare-feu avant d'être créé.
+
+* Va dans le service **VPC** > **Security Groups**.
+* Clique sur **Create security group**.
+* **Security group name :** `wordpress-alb-sg`
+* **VPC :** `wordpress-vpc`
+* **Inbound rules :** Ajoute deux règles d'entrée pour le trafic web mondial :
+* *Règle 1 :* Type `HTTP (80)` | Source `Anywhere-IPv4 (0.0.0.0/0)`
+* *Règle 2 :* Type `HTTPS (443)` | Source `Anywhere-IPv4 (0.0.0.0/0)`
+
+
+* Sauvegarde le groupe de sécurité.
+
+##### Mise à jour du Groupe de Sécurité de l'Application (SG-App)
+
+Pour une sécurité maximale, les serveurs WordPress ne doivent accepter de requêtes *uniquement* si elles proviennent du Load Balancer.
+
+* Sélectionne le groupe `wordpress-app-sg` créé à la Phase 2.
+* Clique sur **Actions** > **Edit inbound rules**.
+* Ajoute une règle : Type `HTTP (80)` | Source : Sélectionne le groupe de sécurité `wordpress-alb-sg`.
+* Sauvegarde. Désormais, personne ne peut contourner le Load Balancer pour attaquer directement les serveurs.
+
+#### Configuration du Target Group (Groupe de Cibles)
+
+Le Target Group indique au Load Balancer vers quels ports et quelles machines router le trafic, ainsi que la méthode pour vérifier la bonne santé (*Health Checks*) des instances.
+
+* Ouvre la console **EC2**, défile dans le menu de gauche et clique sur **Target Groups**.
+* Clique sur **Create target group**.
+* **Choose a target type :** Sélectionne **Instances**.
+* **Target group name :** `wordpress-tg`
+* **Protocol & Port :** `HTTP` sur le port `80`.
+* **VPC :** Sélectionne `wordpress-vpc`.
+* **Health checks :** Laisse le protocole `HTTP` et le chemin par défaut `/`.
+* Clique sur **Next**. À l'étape *Register targets*, ne sélectionne aucune instance (l'Auto Scaling s'en chargera automatiquement plus tard).
+* Clique sur **Create target group**.
+
+#### Déploiement de l'Application Load Balancer (ALB)
+
+* Dans le menu de gauche d'EC2, clique sur **Load Balancers**, puis sur **Create load balancer**.
+* Sous la carte **Application Load Balancer**, clique sur **Create**.
+* **Load balancer name :** `wordpress-alb`
+* **Scheme :** `Internet-facing` (Public)
+* **IP address type :** `IPv4`
+* **Network mapping :**
+* *VPC :* `wordpress-vpc`
+* *Mappings (Crucial) :* Coche les deux zones de disponibilité et attribue-leur impérativement les **sous-réseaux publics** :
+* Zone `us-east-1a` -> Sélectionne `Public-App-AZ-A`
+* Zone `us-east-1b` -> Sélectionne `Public-App-AZ-B`
+
+
+
+
+* **Security groups :** Retire le groupe `default` et associe uniquement **`wordpress-alb-sg`**.
+* **Listeners and routing :** Sous le Listener `HTTP:80`, configure l'action *Forward to* en sélectionnant ton Target Group **`wordpress-tg`**.
+* Clique sur **Create load balancer**. Note le **DNS name** généré une fois l'ALB actif (c'est l'URL publique de ton site).
+
+#### Préparation de la Launch Template (Modèle de Lancement)
+
+La Launch Template définit le profil type des serveurs qui seront créés dynamiquement (système d'exploitation, taille, script de démarrage).
+
+* Dans le menu de gauche d'EC2, clique sur **Launch Templates**, puis sur **Create launch template**.
+* **Launch template name :** `wordpress-template`
+* **Application and OS Images (AMI) :** Choisis **Amazon Linux 2023** (éligible au Free Tier).
+* **Instance type :** Sélectionne **`t2.micro`** (ou `t3.micro` selon l'éligibilité Free Tier de ton compte).
+* **Key pair (login) :** Choisis une paire de clés existante ou crée-en une pour d'éventuels accès SSH de débogage (via un bastion).
+* **Network settings :**
+* *Firewall (Security Groups) :* Choisis *Select existing security group* et coche **`wordpress-app-sg`**.
+* **Ne spécifie aucun sous-réseau ici**, c'est l'Auto Scaling Group qui gérera la distribution dans les zones.
+
+
+* **Advanced details :** Défile tout en bas jusqu'au champ **User data** (Script de démarrage automatique) et injecte le script suivant en remplaçant les variables par tes propres identifiants (EFS, RDS, Valkey) :
+
+```bash
+#!/bin/bash
+# Mise à jour du système
+dnf update -y
+
+# Installation d'Apache, PHP 8.2 et du client NFS pour EFS
+dnf install -y httpd wget php php-mysqlnd php-gd php-xml php-mbstring amazon-efs-utils
+
+# Démarrage et activation d'Apache
+systemctl start httpd
+systemctl enable httpd
+
+# Configuration du montage EFS automatique du dossier wp-content
+mkdir -p /var/www/html/wp-content
+# Remplacer FILE_SYSTEM_ID par l'identifiant réel obtenu à la Phase 2 (ex: fs-0123456)
+mount -t efs -o tls FILE_SYSTEM_ID:/ /var/www/html/wp-content
+echo "FILE_SYSTEM_ID:/ /var/www/html/wp-content efs defaults,_netdev,tls 0 0" >> /etc/fstab
+
+# Téléchargement et installation de WordPress
+cd /var/www/html
+wget https://wordpress.org/latest.tar.gz
+tar -xzf latest.tar.gz --strip-components=1
+rm latest.tar.gz
+
+# Attribution des permissions appropriées pour Apache
+chown -R apache:apache /var/www/html
+chmod -R 755 /var/www/html
+
+```
+
+* Clique sur **Create launch template**.
+
+#### Mise en place de l'Auto Scaling Group (ASG)
+
+L'ASG gère le cycle de vie des instances, garantit la haute disponibilité sur les deux zones et ajuste la capacité selon la charge.
+
+* Dans le menu de gauche d'EC2, clique sur **Auto Scaling Groups**, puis sur **Create Auto Scaling group**.
+* **Name :** `wordpress-asg`
+* **Launch template :** Sélectionne `wordpress-template` et clique sur **Next**.
+* **Network :**
+* *VPC :* `wordpress-vpc`
+* *Availability Zones and subnets (Sécurité Maximale) :* Choisis **impérativement** les deux **sous-réseaux privés applicatifs** :
+* `Private-Web-AZ-A`
+* `Private-Web-AZ-B`
+
+
+* Clique sur **Next**.
+
+
+* **Configure advanced options :**
+* *Load balancing :* Coche **Attach to an existing load balancer**.
+* *Choose from your load balancer target groups :* Sélectionne **`wordpress-tg`**.
+* *Health checks :* Coche **Elastic Load Balancing (ELB)** en plus d'EC2 (permet à l'ASG de remplacer une instance si le serveur Apache crashe, même si la VM reste allumée).
+* Clique sur **Next**.
+
+
+* **Configure group size and scaling policies :**
+* *Desired capacity :* `2` (Garantit la présence constante d'une instance par AZ).
+* *Minimum capacity :* `2`
+* *Maximum capacity :* `4` (Limite haute pour maîtriser les coûts).
+* *Scaling policies :* Sélectionne **Target tracking scaling policy**.
+* *Metric type :* `Average CPU utilization`
+* *Target value :* `70` (Si la moyenne CPU dépasse 70 %, une nouvelle instance est créée).
+
+
+* Clique sur **Next**, passe les étapes de notifications/tags et clique sur **Create Auto Scaling group**.
+
+
+
+L'infrastructure hautement disponible est pleinement opérationnelle. L'ASG va automatiquement démarrer tes 2 premières instances EC2 dans les sous-réseaux privés, monter le volume EFS partagé, et le Load Balancer commencera à diriger le trafic public vers elles dès que leur script d'installation aura fini de s'exécuter.
+
+---
 
 ### Phase 4 : Sécurisation & Front-End (ACM, CloudFront & WAF)
 
