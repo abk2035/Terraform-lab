@@ -529,6 +529,79 @@ L'infrastructure hautement disponible est pleinement opérationnelle. L'ASG va a
 2. **Création de la Distribution CloudFront :** Pointer l'origine de CloudFront vers l'ALB. Configurer la redirection systématique du HTTP vers le HTTPS en y associant le certificat ACM.
 3. **Activation d'AWS WAF :** Associer des règles de pare-feu managées (AWS Managed Rules) à CloudFront ou à l'ALB pour bloquer les injections SQL et les attaques par force brute courantes sur WordPress.
 
+
+Voici le guide complet pour la **Phase 4 : Sécurisation & Front-End (ACM, CloudFront & WAF)**, nettoyé de ses numérotations, mis à jour avec l'interface AWS actuelle et prêt pour ton README.
+
+----
+
+Cette phase finale apporte une couche de sécurité périphérique globale et optimise les performances du site. Grâce au réseau de diffusion de contenu (CDN) CloudFront, le trafic mondial est mis en cache au plus près des utilisateurs, tandis que le chiffrement SSL/TLS et un pare-feu applicatif protègent l'infrastructure contre les attaques courantes.
+
+#### Génération du Certificat SSL/TLS avec AWS Certificate Manager (ACM)
+
+Avant de sécuriser la distribution de contenu, il est nécessaire d'obtenir un certificat de confiance valide.
+
+* Va dans le service **AWS Certificate Manager (ACM)**.
+* Dans le menu de gauche, clique sur **Request certificate**.
+* Sélectionne **Request a public certificate** et clique sur **Next**.
+* **Domain names :** Saisis ton nom de domaine principal (ex: `mon-site-wordpress.com`) et ajoute une seconde ligne avec un domaine joker (ex: `*.mon-site-wordpress.com`) si tu prévois des sous-domaines.
+* **Validation method :** Sélectionne **DNS validation** (fortement recommandé pour une automatisation complète via ton fournisseur de domaine).
+* Cliquez sur **Request**.
+* Une fois le certificat créé avec le statut *Pending validation*, ouvre ses détails, récupère les enregistrements CNAME fournis par AWS et ajoute-les dans la zone DNS de ton fournisseur de domaine (Route 53, Namecheap, GoDaddy, etc.). Dès que la validation DNS est propagée, le statut passe à **Issued** (Émis).
+
+#### Création de la Distribution Amazon CloudFront (CDN)
+
+CloudFront intercepte le trafic public, gère le chiffrement SSL à la périphérie et allège la charge sur l'Application Load Balancer (ALB).
+
+* Va dans le service **CloudFront** puis clique sur **Create distribution**.
+* **Origin :**
+* *Origin domain :* Clique dans le champ et sélectionne ton Application Load Balancer créé à la Phase 3 (`wordpress-alb`).
+* *Protocol :* Laisse sur **HTTP only** (l'ALB n'écoute que sur le port 80, la sécurisation de bout en bout sera assurée par CloudFront).
+
+
+* **Default cache behavior :**
+* *Viewer protocol policy :* Sélectionne **Redirect HTTP to HTTPS** pour forcer la navigation sécurisée.
+* *Allowed HTTP methods :* Sélectionne `GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE` (indispensable pour que l'administration WordPress et la publication d'articles fonctionnent).
+* *Cache key and origin requests :* Choisis **Cache policy and origin request policy**.
+* *Cache policy :* Sélectionne **CachingDisabled** (Le comportement dynamique par défaut de WordPress requiert de désactiver le cache global au niveau du CDN pour éviter de mettre en cache des sessions d'administration ou des pages personnalisées. Le cache de performance reste géré en interne par Valkey).
+* *Origin request policy :* Sélectionne **AllViewer** (Crucial : transmet l'ensemble des en-têtes, cookies et chaînes de requête à l'ALB pour que WordPress sache exactement ce que l'utilisateur demande).
+
+
+
+
+* **Web Application Firewall (WAF) :** Choisis l'option **Do not enable security protections** pour le moment, le pare-feu sera configuré et rattaché à l'étape suivante.
+* **Settings :**
+* *Alternate domain name (CNAME) :* Ajoute ton nom de domaine personnalisé (ex: `mon-site-wordpress.com`).
+* *Custom SSL certificate :* Clique sur le champ et sélectionne le certificat généré précédemment via ACM.
+
+
+* Clique sur **Create distribution** (le déploiement initial sur le réseau mondial prend environ 3 à 5 minutes). Note le **Distribution domain name** (ex: `d123456789.cloudfront.net`).
+
+#### Activation et Configuration d'AWS WAF (Web Application Firewall) 
+
+AWS WAF analyse les requêtes HTTP/HTTPS en temps réel à la périphérie du réseau pour bloquer les comportements malveillants ciblant le CMS.
+
+* Ouvre le service **WAF & Shield**.
+* Clique sur **Create web ACL**.
+* **Web ACL details :**
+* *Name :* `wordpress-waf-acl`
+* *Resource type :* Sélectionne **CloudFront distributions** (pour bloquer les attaques avant même qu'elles n'atteignent le réseau AWS régional).
+
+
+* **Associated AWS resources :** Clique sur **Add AWS resources**, coche ta distribution CloudFront nouvellement créée et valide. Cliquez sur **Next**.
+* **Rules :** Clique sur **Add rules** > **Add managed rule groups**.
+* Déroule la section **AWS managed rule groups** et active les protections suivantes en cochant *Add to web ACL* :
+* **Core rule set (CRS) :** Fournit une protection générale contre un large éventail de vulnérabilités (OWASP Top 10, injections de scripts).
+* **SQL database :** Bloque spécifiquement les tentatives d'injections SQL visant ta base de données RDS.
+* **Known bad inputs :** Bloque les requêtes contenant des patterns ou des payloads connus pour être malveillants.
+* **WordPress application :** (Optionnel mais recommandé) Règles spécifiques protégeant contre les exploits ciblant directement l'architecture et les plugins WordPress.
+
+
+* Clique sur **Add rules** en bas, puis sur **Next** pour passer les étapes d'ordonnancement et de métriques CloudWatch, et enfin sur **Create web ACL**.
+
+
+
+L'architecture est entièrement finalisée. Il ne te reste plus qu'à créer un enregistrement de type **CNAME** ou **Alias** chez le fournisseur de domaine pointant l'adresse DNS personnalisée vers le nom de domaine CloudFront (`d123456789.cloudfront.net`). Le flux complet est opérationnel : l'utilisateur accède de manière sécurisée (HTTPS) à CloudFront, protégé par le WAF, qui transmet proprement les flux à l'ALB public, lequel distribue la charge sur tes instances WordPress isolées et performantes.
+
 ---
 
 ## 4. Comment Tester le Projet ?
