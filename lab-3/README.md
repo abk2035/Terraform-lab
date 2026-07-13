@@ -613,6 +613,22 @@ L'architecture est entièrement finalisée. Il ne te reste plus qu'à créer un 
 
 ## 5. Feuille de Route de Déploiement & Architecture Terraform
 
+### Architecture 
+
+wordpress-infra-modular/
+├── environments/
+│   └── dev/
+│       ├── main.tf          # Appel et orchestration de tous les modules
+│       ├── providers.tf     # Déclaration des providers (avec alias us-east-1 pour ACM)
+│       ├── variables.tf     # Valeurs spécifiques à l'environnement Dev
+│       └── outputs.tf       # Restitution des points d'accès (URL CloudFront, Route53)
+└── modules/
+    ├── vpc/                 # VPC, Subnets publics/privés, NAT Gateway, Route Tables
+    ├── security_groups/     # Définition fine de tous les Security Groups (ALB, EC2, RDS, EFS)
+    ├── storage/             # Amazon RDS MySQL + Amazon EFS + Mount Targets
+    ├── compute/             # Launch Template, ASG, ALB et Target Group
+    └── security_edge/       # Route53, Certificat ACM (us-east-1) et AWS WAFv2
+
 on découpe le projet en modules Terraform réutilisables pour éviter le code monolithique.
 
 ### Étape 1 : Initialisation du Backend & Structure IaC
