@@ -20,17 +20,15 @@ module "storage" {
   db_security_group_id = module.security_groups.rds_sg_id
   efs_security_group_id = module.security_groups.efs_sg_id
   db_password         = var.db_password
+  db_name             = var.db_name
+  db_username         = var.db_username
 }
 
 # 4. Module Certificat SSL (Uniquement ACM en us-east-1)
 module "security_edge" {
   source      = "../../modules/security_edge"
   environment = var.environment
-  domain_name = var.domain_name
-
-  providers = {
-    aws.us-east-1 = aws.us-east-1
-  }
+  domain_name = var.domain_name 
 }
 
 # 5. Module Application (EC2, ASG, ALB, CloudFront)

@@ -14,3 +14,13 @@ variable "db_password" {
   sensitive   = true
   description = "Mot de passe maître pour la base de données RDS MySQL"
 }
+
+variable "db_name" {
+  type        = string
+  description = "nom de la base de données RDS MySQL"
+}
+
+variable "db_username" {
+  type        = string
+  description = "nom d'utilisateur pour la base de données RDS MySQL"
+}
